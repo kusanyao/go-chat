@@ -6,6 +6,7 @@ import (
     "log"
     "strconv"
     "errors"
+    "protocol"
 )
 
 
@@ -41,23 +42,28 @@ func handleConnection(conn net.Conn){
         fmt.Println("defer do : conn closed")
         conn.Close()
     }()
-    var closed = make(chan bool)
     uid, err := checkUserIdentity(conn)
     if  err != nil {
         fmt.Println("check f", uid,err);
         return
     }
+    var closed = make(chan bool)
+
+    //声明一个管道用于接收解包的数据
+    readerChannel := make(chan []byte, 16)
+    
+    tmpBuffer := make([]byte, 0)
+    go reader(readerChannel)
+
     go func(){
         for {
-            data   := make([]byte, 1024)
-            i, err := conn.Read(data)
+            buffer := make([]byte, 1024)
+            i, err := conn.Read(buffer)
             if(err != nil){
                 fmt.Println("conn.Read error:", err);
                 return;
             }
-            message := string(data[0:i])
-            fmt.Println("MESSAGE", message)
-            go processingBusiness(conn, message)
+            tmpBuffer = protocol.Unpack(append(tmpBuffer, buffer[:i]...), readerChannel)
         }
     }()
 
@@ -72,9 +78,16 @@ func handleConnection(conn net.Conn){
         }
     }()
 
+    if <-closed {
+        return
+    }
+}
+
+func reader(readerChannel chan []byte) {
     for {
-        if <-closed {
-            return
+        select {
+            case data := <-readerChannel:
+                fmt.Println("message" , string(data))
         }
     }
 }
@@ -83,27 +96,41 @@ func handleConnection(conn net.Conn){
  * 认证用户
  */
 func checkUserIdentity(conn net.Conn) (int, error){
-    data   := make([]byte, 10)
-    i, err := conn.Read(data)
-    if(err != nil){
-        return 0, errors.New("checkUserIdentity ERROR");
+    for {
+        _, err := conn.Write([]byte("请注册用户，输入\"I AM {YOUR NAME}.\""))
+        if(err != nil){
+            return 0, err;
+        }
+
+        headerBuffer := make([]byte, 7)
+        _, err = conn.Read(headerBuffer)
+        if err != nil  {
+            return 0, errors.New("checkUserIdentity ERROR");
+        }
+
+        uidBuffer := make([]byte, 7)
+        i, err := conn.Read(uidBuffer)
+        if err != nil  {
+            return 0, errors.New("checkUserIdentity ERROR");
+        }
+
+        var uidStr string = string(uidBuffer[0:i])
+        uid, err := strconv.Atoi(uidStr)
+        if err != nil{
+            return 0, err;
+        }
+        fmt.Println("check",uid,err);
+        clientMap[uid] = make(chan string)
+        fmt.Println("check3333333333333",uid,err);
+        return uid, nil
     }
-    var uidStr string = string(data[0:i])
-    uid, err := strconv.Atoi(uidStr)
-    if err != nil{
-        return 0, errors.New("checkUserIdentity ERROR2");
-    }
-    fmt.Println("check",uid,err);
-    clientMap[uid] = make(chan string)
-    fmt.Println("check3333333333333",uid,err);
-    return uid, nil
 }
 
 /**
  * 处理业务
  */
 func processingBusiness(conn net.Conn, message string){
-    r, err := conn.Write([]byte(message))
+    r, err := conn.Write([]byte("you said "+message))
     fmt.Println("processingBusiness", r, err, message)
     if(err != nil){
         return
